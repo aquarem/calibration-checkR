@@ -51,20 +51,66 @@ reg <- cal |>
     mutate(
         weights = 1 / (level^2)
     ) |> 
-    reframe(
+    mutate(
         .by = constituent,
         # this will have to be a function
         # reg = list(lm(response ~ level, weights = weights)),
         reg = list(lm(response ~ level + 0, weights = weights)),
-        # intercept = map_dbl(reg, \(x) coef(x) |> pluck("(Intercept)")),
-        intercept = 0,
+        intercept = map_dbl(reg, \(x) x |> 
+            coef() |> 
+            pluck("(Intercept)") |> 
+            coalesce(0)
+        ),
         slope = map_dbl(reg, \(x) coef(x) |> pluck("level")),
         r2 = map_dbl(reg, \(x) summary(x) |> pluck("adj.r.squared")),
         n = length(response |> discard(is.na))
-    ) |> 
-    select(!reg)
+    )
 
-reg
+
+
+
+cal |> 
+    mutate(calibration = "avgRF", yIntercept = FALSE, weight = "none") |> 
+    mutate(
+        .by = constituent,
+        weight = case_when(
+            # this needs to be first
+            calibration == "avgRF" |
+                weight == "1/x^2" ~ 1 / (level ^2),
+            weight == "none" ~ level,
+            weight == "1/x" ~ 1 / level
+        ),
+        form = case_when(
+            calibration == "avgRF" | 
+                (calibration == "linear" & !yIntercept) ~ "response ~ level + 0",
+            calibration == "linear" ~ "response ~ level",
+            calibration == "quadratic" ~ "response ~ level + I(level^2)"
+        ),
+        # total, including NA points
+        num = length(response),
+        n = sum(!is.na(response)),
+        df = case_when(
+            calibration == "avgRF" | 
+                (calibration == "linear" & !yIntercept) ~ 1,
+            calibration == "linear" ~ 2,
+            calibration == "quadratic" ~ 3 # I think???
+        )
+    ) |> 
+    drop_na(response) |> 
+    nest(regdata = !c(constituent, form)) |> 
+    mutate(
+        reg = map2(regdata, form, \(x, y) lm(as.formula(y), x, weights = x$weight)),
+        calculated = map2(regdata, reg, \(x, y) predict(y, x))
+    ) |> 
+    unnest(c(regdata, calculated)) |> 
+    mutate(
+        accuracy = calculated / level * 100
+    ) |> 
+    select(calculated, level, accuracy)
+
+
+
+
 
 # maybe we should do the accuracy and RSE calculations now
 # rather than do them separately
@@ -88,9 +134,27 @@ cal_reg <- cal |>
             sd(rfs, na.rm = TRUE) / mean(rfs, na.rm = TRUE) * 100
         } }(response, level)
     )
-    
-cal_reg
 
+cal |> 
+    left_join(reg) |> 
+    mutate(
+        .by = constituent,
+        calculated = (response - intercept) / slope,
+        accuracy = calculated / level * 100,
+        rse = (
+            ( (calculated - level) / level )^2  / (n - 1) # 2 if y-int enable
+        ) |> 
+            sum(na.rm = TRUE) |> 
+            sqrt() * 100,
+        
+        rf_rsd = { \(res, lev) {
+            rfs <- res / lev
+            sd(rfs, na.rm = TRUE) / mean(rfs, na.rm = TRUE) * 100
+        } }(response, level)
+    ) |> 
+    select(constituent,level, calculated, accuracy, rse, rf_rsd) |> 
+    arrange(constituent) |> 
+    unique()
 # so now the question is how would we display other stuff?
 # and/or let things be disabled?
 # I guess we could put a bonus thing on there
@@ -141,6 +205,7 @@ cal_plots <- cal_reg |>
     facet_wrap(vars(constituent), scales = "free") +
     theme_bw()
 
+cal_plots
 
 
 
