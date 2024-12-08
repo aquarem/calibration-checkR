@@ -11,7 +11,6 @@ source(here("functionized.R"))
 
 ui <- fluidPage(
     fluidRow(
-        
         rHandsontableOutput("calSettings")
     ),
     
@@ -78,8 +77,6 @@ server <- function(input, output) {
     })
     
     
-    
-    
     # is this reactive by default? idk
     output$testPlotly <- renderPlotly({
         req(cal_reg())
@@ -89,10 +86,6 @@ server <- function(input, output) {
             ggplotly() |> 
             style(textposition = "bottom right") # from plotly.js
     })
-    
-    
-    
-    
     
 }
 
