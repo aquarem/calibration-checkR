@@ -5,7 +5,7 @@ library(shiny)
 library(plotly)
 library(rhandsontable)
 
-source(here('testing.R'))
+# source(here('testing.R'))
 source(here("functionized.R"))
 
 
