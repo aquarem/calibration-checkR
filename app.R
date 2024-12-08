@@ -5,6 +5,13 @@ library(shiny)
 library(plotly)
 library(rhandsontable)
 
+library(readxl)
+
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+
 # source(here('testing.R'))
 source(here("functionized.R"))
 

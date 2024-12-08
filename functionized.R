@@ -177,7 +177,7 @@ plot_cal <- function(cal_reg) {
                 label = paste(
                     expr,
                     paste0(n, " of ", num, " levels"),
-                    paste0("R2: ", round(r2, 4)),
+                    paste0("R\u00B2: ", round(r2, 4)),
                     paste0("RSE: ", round(rse, 1)),
                     paste0("RF RSD: ", round(rf_rsd, 1)),
                     sep = "\n"

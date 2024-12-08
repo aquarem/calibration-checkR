@@ -5,8 +5,8 @@ account: apsoras@usgs.gov
 server: rconnect.chs.usgs.gov
 hostUrl: https://rconnect.chs.usgs.gov/__api__
 appId: 2266
-bundleId: 277593
-url: https://rconnect.chs.usgs.gov/content/929427f1-5626-4530-b57a-08a3c26c4efd/
+bundleId: 277608
+url: https://rconnect.chs.usgs.gov/calibration_checkR/
 version: 1
 asMultiple: FALSE
 asStatic: FALSE
