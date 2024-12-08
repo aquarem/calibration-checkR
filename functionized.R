@@ -14,20 +14,43 @@
 # and then manually set the weight to 1/x^2 for the avgRF regression
 
 # the problem here was not my RSE calculation
-# it is that both fitted.values and predict() use the weights twice
-# it is not logical to apply "training" data weights to "test" data
-# i.e., not make sense to use weights to fit then use them also to predict
-# however, R does this anyways
-# so our manual linreg calcs came out correct (and rf rsd), but anything
-# else would come out wrong
-# so, we have to write a function that takes those coefficients
-# and applies them in the correct way without the weights
 
-# I guess then we need to write a like prediction function
-# that applies the correct formula and does not use weights
+# that actual problem is that the models can't go backwards
+# in calibration we use known x and y and pretend the response is the predicted variable,
+# but then in real life we use a known y to predict the x
+# so for R purposes response should be the x axis, not conncentration
+# so we had to swap the formula around and swap the plotting around
+# since calculated was actually the response, not the conc.!
+
+# after fixes, chloride RSE == RF RSD, but fluoride and bromide are still slightly different
+# with RF RSD being higher for some reason. Who knows why
+# still serves the purpose of showing why RF RSD makes no sense for quadratic
+
 
 
 make_cal <- function(calData, calTypes) {
+    
+
+    # using a swap function since our formula needs to be backwards for calcs
+    # but for display we want to show it response ~ level
+    str_swap <- function(str, swap1, swap2, int) {
+        str |> 
+            str_replace_all(swap1, int) |>  # lul using string as replacement
+            str_replace_all(swap2, swap1) |>  # 2 goes to 1
+            str_replace_all(int, swap2) # intermediate goes to 2
+    }
+    
+    # str_swap("level ~ response + I(response^2)", "response", "level", "rand")
+    # # does it work with vectors? yes!!
+    # str_swap(
+    #     c(
+    #         "level ~ response + 0", 
+    #         "level ~ response", 
+    #         "level ~ response + I(response^2)"
+    #     ),
+    #     "level", "response", "rand"
+    # )
+    
     cal_reg <- calData |> 
         left_join(calTypes) |> 
         mutate(
@@ -39,17 +62,14 @@ make_cal <- function(calData, calTypes) {
                 weight == "none" ~ level,
                 weight == "1/x" ~ 1 / level
             ),
-            # maybe this is backwards?????
-            # was response ~ level
-            # which I thought meant response predicts level
-            # so when we use response we calculate level
-            # but this seems to be backwards or something
             form = case_when(
                 calibration == "avgRF" | 
                     (calibration == "linear" & !yIntercept) ~ "level ~ response + 0",
                 calibration == "linear" ~ "level ~ response",
                 calibration == "quadratic" ~ "level ~ response + I(response^2)"
             ),
+            # tricky swap so we can extract the formula
+            printform = str_swap(form, "level", "response", "inter"),
             # total, including NA points
             num = length(response),
             n = sum(!is.na(response)),
@@ -61,26 +81,58 @@ make_cal <- function(calData, calTypes) {
             )
         ) |> 
         drop_na(response) |> 
-        nest(regdata = !c(constituent, form)) |> 
+        nest(regdata = !c(constituent, form, printform)) |> 
         mutate(
             reg = map2(regdata, form, \(x, y) lm(as.formula(y), x, weights = x$weight)),
+            printreg = map2(regdata, printform, \(x, y) lm(as.formula(y), x, weights = x$weight)),
             r2 = map_dbl(reg, \(x) summary(x) |> pluck("adj.r.squared")),
             calculated = map2(regdata, reg, \(x, y) {
                 predict(y, x)
+            }),
+            expression = map(printreg, \(x) {
+                x |> 
+                    broom::tidy() |> 
+                    mutate(
+                        estimate = signif(estimate, digits = 2),
+                        term = case_when(
+                            term == "level" ~ "x",
+                            term == "(Intercept)" ~ "b",
+                            term == "I(level^2)" ~ "x2",
+                            .default = "???"
+                        ),
+                        pair = case_when(
+                            term == "x" ~ paste0(estimate, "x"),
+                            term == "b" ~ paste0("+ ", estimate),
+                            term == "x2" ~ paste0(estimate, "\u00B2 +")
+                        ),
+                        order = case_when(
+                            term == "x2" ~ 1,
+                            term == "x" ~ 2,
+                            term == "b" ~ 3
+                        )
+                    ) |> 
+                    arrange(order) |> 
+                    summarize(
+                        expr = paste0(pair, collapse = " ")
+                    )
             })
-        ) |>
-        unnest(c(regdata, calculated)) |>
+        ) |> 
+        unnest(c(regdata, calculated, expression)) |> # what shape will this be???
         mutate(
             accuracy = calculated / level * 100,
-            se = ( ( ( calculated - level ) / level )^2 ) / (n - 1),
+            se = ( ( ( calculated - level ) / level )^2 ) / (n - df),
             rf = response / level
         ) |>
         # still not perfectly identical even though they should be - why????????
         mutate(
             .by = constituent,
             rse = (sum(se, na.rm = TRUE) |> sqrt()) * 100,
-            rf_rsd = ( sd(rf) / mean(rf, na.rm = TRUE) ) * 100
+            rf_rsd = ( sd(rf) / mean(rf, na.rm = TRUE) ) * 100,
         )
+    
+    
+    # now it would be good to get the formula sorted somewhere in here
+    # would be repeated a lot
 }
 
 
@@ -100,8 +152,7 @@ plot_cal <- function(cal_reg) {
                 predict(y, x)
             })        
         ) |> 
-        unnest(c(regdata, calculated)) |> 
-        print()
+        unnest(c(regdata, calculated))
     
     cal_reg |> 
         ggplot(aes(level, response)) +
@@ -118,14 +169,13 @@ plot_cal <- function(cal_reg) {
                     rf_rsd = unique(rf_rsd),
                     n = length(level),
                     num = unique(num),
-                    # slope = unique(slope) |> signif(3),
-                    # intercept = unique(intercept) |> signif(3)
+                    expr = unique(expr)
                 ),
             aes(
                 x = left,
                 y = top,
                 label = paste(
-                    # paste0("y = ", slope, "x + ", intercept),
+                    expr,
                     paste0(n, " of ", num, " levels"),
                     paste0("R2: ", round(r2, 4)),
                     paste0("RSE: ", round(rse, 1)),
